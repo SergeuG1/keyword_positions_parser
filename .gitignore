@@ -1,0 +1,8 @@
+.env
+__pycache__
+logs
+files
+1.py
+env.rar
+.vscode/launch.json
+parse copy.py
