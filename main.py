@@ -10,10 +10,13 @@ from views.keywords import Keywords
 from views.keyword_products import KeywordProducts
 from views.keywords_positions import KeywordPositions
 from parse import postion_products
-from threading import Lock, Semaphore, Thread
+from threading import Thread
 import threading
+from multiprocessing import Process
+
 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36 OPR/94.0.0.0"  # noqa 501
+
 
 
 def error_handler(exception: BaseException):
@@ -47,7 +50,6 @@ def send_log_to_tg():
 def get_product_pages(keywords, keywords_infos):
     for i, keyword in enumerate(keywords[::]): 
 
-        keyword.title = keyword.title.replace('"', '')
         logger.info(f"{threading.current_thread().getName()} i = {i} Сейчас собираеться ключевое слово {keyword.title}:  {i + 1} из {len(keywords)}")
         if keyword.title == '':
             logger.debug(f"keyword.title is none, id = {i} key = {keyword.title}")
@@ -61,7 +63,7 @@ def get_product_pages(keywords, keywords_infos):
         keywords_infos[keyword.title] = {_["id"] : idx + 1 for idx, _ in enumerate(postions_product)}  
         time.sleep(5)
 
-
+        
 def chunks(lst, n):
     arr_keys = []
     for i in range(0, len(lst), n):
@@ -77,24 +79,23 @@ def start():
     with SessionLocal() as session:
         total = []
         keyword_products: list[KeywordProducts] = session.query(KeywordProducts).all()
-        keywords = session.query(Keywords).filter(Keywords.id.in_([i.keyword_id for i in keyword_products]))
-        products = session.query(Product).filter(Product.id.in_([i.product_id for i in keyword_products]))
+        keywords = session.query(Keywords).filter(Keywords.id.in_([i.keyword_id for i in keyword_products])).all()
+        products = session.query(Product).filter(Product.id.in_([i.product_id for i in keyword_products])).all()
         
         keywords = {i.id : i for i in keywords}
         products = {i.id : i for i in products}
         
         keywords_infos = {}
-        n  = 2
-        
-        keys_arr = chunks(list(keywords.values()), math.ceil(len(keywords) / n))
-        threads = [Thread(target=get_product_pages, args=(keys_arr[i], keywords_infos)) for i in range(n)]
+        n  = 30
+        keys_temp = list(keywords.values())[::]
+        keys_arr = chunks(keys_temp, math.ceil(len(keys_temp) / n))
+        threads = [Thread(target=get_product_pages, args=(keys_arr[i], keywords_infos), daemon=True) for i in range(n)]
 
         for t in threads:
             t.start()
 
         for t in threads:
             t.join()
-
 
         for i, kp in enumerate(keyword_products):
             product: Product = products[kp.product_id]
@@ -122,17 +123,17 @@ def start():
             total.append(new_keyword_position)
             
 
-    #     try: 
-    #         session.add_all(total)
-    #         session.commit()
-    #         logger.info(f"Были успешно добавлены данные о товарах и их позициях по ключевым словам в количестве {len(total)}")
-    #     except Exception as e:
-    #         session.rollback()
-    #         logger.critical(f"Произошла ошибка при добавлении ключевых слов {e}")
 
-    #     time.sleep(10)
-    # send_log_to_tg()
-    logger.success("END")
+        try: 
+            session.add_all(total)
+            session.commit()
+            logger.info(f"Были успешно добавлены данные о товарах и их позициях по ключевым словам в количестве {len(total)}")
+        except Exception as e:
+            session.rollback()
+            logger.critical(f"Произошла ошибка при добавлении ключевых слов {e}")
+
+        time.sleep(10)
+    send_log_to_tg()
 
 
 if __name__ == "__main__":
@@ -144,3 +145,4 @@ if __name__ == "__main__":
         level="DEBUG",
         compression="zip")
     start()
+
